@@ -8,16 +8,11 @@
  * the same directory.
  */
 
-var assert = require("assert");
-var path = require("path");
 var fs = require("fs");
 var through = require("through");
 var transform = require("./lib/visit").transform;
 var utils = require("./lib/util");
-var recast = require("recast");
-var types = recast.types;
 var genOrAsyncFunExp = /\bfunction\s*\*|\basync\b/;
-var blockBindingExp = /\b(let|const)\s+/;
 
 function exports(file, options) {
   var data = [];
@@ -28,8 +23,10 @@ function exports(file, options) {
   }
 
   function end() {
-    this.queue(compile(data.join(""), options).code);
-    this.queue(null);
+    try {
+      this.queue(compile(data.join(""), options).code);
+      this.queue(null);
+    } catch (e) { this.emit('error', e); }
   }
 }
 
@@ -40,117 +37,55 @@ module.exports = exports;
 // To include the runtime globally in the current node process, call
 // require("regenerator").runtime().
 function runtime() {
-  require("./runtime");
+  regeneratorRuntime = require("regenerator-runtime");
 }
 exports.runtime = runtime;
-runtime.path = path.join(__dirname, "runtime.js");
+runtime.path = require("regenerator-runtime/path.js").path;
+
+var cachedRuntimeCode;
+function getRuntimeCode() {
+  return cachedRuntimeCode ||
+    (cachedRuntimeCode = fs.readFileSync(runtime.path, "utf8"));
+}
+
+var transformOptions = {
+  presets: [require("regenerator-preset")],
+  parserOpts: {
+    sourceType: "module",
+    allowImportExportEverywhere: true,
+    allowReturnOutsideFunction: true,
+    allowSuperOutsideMethod: true,
+    strictMode: false,
+    plugins: ["*", "jsx", "flow"]
+  }
+};
 
 function compile(source, options) {
-  options = normalizeOptions(options);
+  var result;
 
-  if (!genOrAsyncFunExp.test(source)) {
-    return {
-      // Shortcut: no generators or async functions to transform.
-      code: (options.includeRuntime ? fs.readFileSync(
-        runtime.path, "utf-8"
-      ) + "\n" : "") + source
-    };
-  }
-
-  var recastOptions = getRecastOptions(options);
-  var ast = recast.parse(source, recastOptions);
-  var path = new types.NodePath(ast);
-  var programPath = path.get("program");
-
-  if (shouldVarify(source, options)) {
-    // Transpile let/const into var declarations.
-    varifyAst(programPath.node);
-  }
-
-  transform(programPath, options);
-
-  return recast.print(path, recastOptions);
-}
-
-function normalizeOptions(options) {
   options = utils.defaults(options || {}, {
-    includeRuntime: false,
-    supportBlockBinding: true
+    includeRuntime: false
   });
 
-  if (!options.esprima) {
-    options.esprima = require("esprima-fb");
+  // Shortcut: Transform only if generators or async functions present.
+  if (genOrAsyncFunExp.test(source)) {
+    result = require("babel-core").transform(source, transformOptions);
+  } else {
+    result = { code: source };
   }
 
-  assert.ok(
-    /harmony/.test(options.esprima.version),
-    "Bad esprima version: " + options.esprima.version
-  );
-
-  return options;
-}
-
-function getRecastOptions(options) {
-  var recastOptions = {
-    range: true
-  };
-
-  function copy(name) {
-    if (name in options) {
-      recastOptions[name] = options[name];
-    }
+  if (options.includeRuntime === true) {
+    result.code = getRuntimeCode() + "\n" + result.code;
   }
 
-  copy("esprima");
-  copy("sourceFileName");
-  copy("sourceMapName");
-  copy("inputSourceMap");
-  copy("sourceRoot");
-
-  return recastOptions;
+  return result;
 }
 
-function shouldVarify(source, options) {
-  var supportBlockBinding = !!options.supportBlockBinding;
-  if (supportBlockBinding) {
-    if (!blockBindingExp.test(source)) {
-      supportBlockBinding = false;
-    }
-  }
+// Allow packages that depend on Regenerator to use the same copy of
+// ast-types, in case multiple versions are installed by NPM.
+exports.types = require("recast").types;
 
-  return supportBlockBinding;
-}
-
-function varify(source, options) {
-  var recastOptions = getRecastOptions(normalizeOptions(options));
-  var ast = recast.parse(source, recastOptions);
-  varifyAst(ast.program);
-  return recast.print(ast, recastOptions).code;
-}
-
-function varifyAst(ast) {
-  types.namedTypes.Program.assert(ast);
-
-  var defsResult = require("defs")(ast, {
-    ast: true,
-    disallowUnknownReferences: false,
-    disallowDuplicated: false,
-    disallowVars: false,
-    loopClosures: "iife"
-  });
-
-  if (defsResult.errors) {
-    throw new Error(defsResult.errors.join("\n"))
-  }
-
-  return ast;
-}
-
-// Convenience for just translating let/const to var declarations.
-exports.varify = varify;
-
-// Transforms a string of source code, returning the { code, map? } result
-// from recast.print.
+// Transforms a string of source code, returning a { code, map? } result.
 exports.compile = compile;
 
 // To modify an AST directly, call require("regenerator").transform(ast).

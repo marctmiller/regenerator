@@ -8,43 +8,46 @@
  * the same directory.
  */
 
-var assert = require("assert");
-var m = require("private").makeAccessor();
-var types = require("recast").types;
-var isArray = types.builtInTypes.array;
-var n = types.namedTypes;
-var hasOwn = Object.prototype.hasOwnProperty;
+import assert from "assert";
+let m = require("private").makeAccessor();
+import * as t from "babel-types";
+let hasOwn = Object.prototype.hasOwnProperty;
 
 function makePredicate(propertyName, knownTypes) {
   function onlyChildren(node) {
-    n.Node.assert(node);
+    t.assertNode(node);
 
     // Assume no side effects until we find out otherwise.
-    var result = false;
+    let result = false;
 
     function check(child) {
       if (result) {
         // Do nothing.
-      } else if (isArray.check(child)) {
+      } else if (Array.isArray(child)) {
         child.some(check);
-      } else if (n.Node.check(child)) {
+      } else if (t.isNode(child)) {
         assert.strictEqual(result, false);
         result = predicate(child);
       }
       return result;
     }
 
-    types.eachField(node, function(name, child) {
-      check(child);
-    });
+    let keys = t.VISITOR_KEYS[node.type];
+    if (keys) {
+      for (let i = 0; i < keys.length; i++) {
+        let key = keys[i];
+        let child = node[key];
+        check(child);
+      }
+    }
 
     return result;
   }
 
   function predicate(node) {
-    n.Node.assert(node);
+    t.assertNode(node);
 
-    var meta = m(node);
+    let meta = m(node);
     if (hasOwn.call(meta, propertyName))
       return meta[propertyName];
 
@@ -64,13 +67,14 @@ function makePredicate(propertyName, knownTypes) {
   return predicate;
 }
 
-var opaqueTypes = {
-  FunctionExpression: true
+let opaqueTypes = {
+  FunctionExpression: true,
+  ArrowFunctionExpression: true
 };
 
 // These types potentially have side effects regardless of what side
 // effects their subexpressions have.
-var sideEffectTypes = {
+let sideEffectTypes = {
   CallExpression: true, // Anything could happen!
   ForInStatement: true, // Modifies the key variable.
   UnaryExpression: true, // Think delete.
@@ -81,7 +85,7 @@ var sideEffectTypes = {
 };
 
 // These types are the direct cause of all leaps in control flow.
-var leapTypes = {
+let leapTypes = {
   YieldExpression: true,
   BreakStatement: true,
   ContinueStatement: true,
@@ -90,7 +94,7 @@ var leapTypes = {
 };
 
 // All leap types are also side effect types.
-for (var type in leapTypes) {
+for (let type in leapTypes) {
   if (hasOwn.call(leapTypes, type)) {
     sideEffectTypes[type] = leapTypes[type];
   }

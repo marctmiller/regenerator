@@ -1,9 +1,8 @@
-regenerator [![Build Status](https://travis-ci.org/facebook/regenerator.png?branch=master)](https://travis-ci.org/facebook/regenerator)
+regenerator [![Build Status](https://travis-ci.org/facebook/regenerator.svg?branch=master)](https://travis-ci.org/facebook/regenerator)
 ===
 
 This package implements a fully-functional source transformation that
-takes the proposed syntax for generators/`yield` from future versions of
-JS ([ECMAScript6 or ES6](http://wiki.ecmascript.org/doku.php?id=harmony:specification_drafts), experimentally implemented in Node.js v0.11) and
+takes the syntax for generators/`yield` from [ECMAScript 2015 or ES2015](http://www.ecma-international.org/ecma-262/6.0/) and [Asynchronous Iteration](https://github.com/tc39/proposal-async-iteration) proposal and
 spits out efficient JS-of-today (ES5) that behaves the same way.
 
 A small runtime library (less than 1KB compressed) is required to provide the
@@ -13,7 +12,7 @@ or as a standalone .js file, whichever you prefer.
 Installation
 ---
 
-From NPM:
+From npm:
 ```sh
 npm install -g regenerator
 ```
@@ -36,6 +35,7 @@ Simplest usage:
 ```sh
 regenerator es6.js > es5.js # Just the transform.
 regenerator --include-runtime es6.js > es5.js # Add the runtime too.
+regenerator src lib # Transform every .js file in src and output to lib.
 ```
 
 Programmatic usage:

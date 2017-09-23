@@ -21,7 +21,8 @@ function convert(es6File, es5File, callback) {
       return callback(err);
     }
 
-    fs.writeFile(es5File, regenerator.compile(es6).code, callback);
+    var es5 = regenerator.compile(es6).code;
+    fs.writeFile(es5File, es5, callback);
   });
 }
 
@@ -37,10 +38,11 @@ function bundle(es5Files, browserFile, callback) {
 }
 
 var queue = [];
-function enqueue(cmd, args) {
+function enqueue(cmd, args, quiet) {
   queue.push({
     cmd: cmd,
-    args: args || []
+    args: args || [],
+    quiet: !!quiet
   });
 }
 
@@ -52,7 +54,11 @@ function flush() {
       cmd.apply(null, entry.args.concat(asyncCallback));
     } else {
       spawn(cmd, entry.args, {
-        stdio: "inherit"
+        stdio: [
+          process.stdin,
+          entry.quiet ? "ignore" : process.stdout,
+          process.stderr
+        ]
       }).on("exit", asyncCallback);
     }
   }
@@ -81,8 +87,17 @@ if (semver.gte(process.version, "0.11.2")) {
   enqueue("mocha", [
     "--harmony",
     "--reporter", "spec",
-    "--require", "./runtime",
-    "./test/tests.es6.js"
+    "--require", "./test/runtime.js",
+    "./test/tests.es6.js",
+  ]);
+}
+
+if (semver.gte(process.version, "4.0.0")) {
+  enqueue("mocha", [
+    "--harmony",
+    "--reporter", "spec",
+    "--require", "./test/runtime.js",
+    "./test/tests-node4.es6.js",
   ]);
 }
 
@@ -91,9 +106,51 @@ enqueue(convert, [
   "./test/tests.es5.js"
 ]);
 
+if (semver.gte(process.version, "4.0.0")) {
+  enqueue(convert, [
+    "./test/tests-node4.es6.js",
+    "./test/tests-node4.es5.js"
+  ]);
+} else {
+  // we are on an older platform, but we still need to create an empty
+  // tests-node4.es5.js file so that the test commands below have a file to refer
+  // to.
+  fs.writeFileSync("./test/tests-node4.es5.js", "");
+}
+
 enqueue(convert, [
-  "./test/async.es6.js",
+  "./test/non-native.js",
+  "./test/non-native.es5.js"
+]);
+
+enqueue(convert, [
+  "./test/async.js",
   "./test/async.es5.js"
+]);
+
+function convertWithSpread(es6File, es5File, callback) {
+  var transformOptions = {
+    presets:[require("regenerator-preset")],
+    plugins: [
+      require("babel-plugin-transform-es2015-spread"),
+      require("babel-plugin-transform-es2015-parameters")
+    ]
+  };
+
+  fs.readFile(es6File, "utf-8", function(err, es6) {
+    if (err) {
+      return callback(err);
+    }
+
+    var es5 = require("babel-core").transform(es6, transformOptions).code;
+
+    fs.writeFile(es5File, es5, callback);
+  });
+}
+
+enqueue(convertWithSpread, [
+  "./test/regression.js",
+  "./test/regression.es5.js"
 ]);
 
 enqueue(makeMochaCopyFunction("mocha.js"));
@@ -105,9 +162,14 @@ if (!semver.eq(process.version, "0.11.7")) {
   try {
     require.resolve("browserify"); // Throws if missing.
     enqueue(bundle, [
-      ["./runtime.js",
-       "./test/tests.es5.js",
-       "./test/async.es5.js"],
+      [
+        "./test/runtime.js",
+        "./test/tests.es5.js",
+        "./test/tests-node4.es5.js",
+        "./test/non-native.es5.js",
+        "./test/async.es5.js",
+        "./test/regression.es5.js"
+      ],
       "./test/tests.browser.js"
     ]);
   } catch (ignored) {
@@ -117,9 +179,82 @@ if (!semver.eq(process.version, "0.11.7")) {
 
 enqueue("mocha", [
   "--reporter", "spec",
-  "--require", "./runtime",
+  "--require", "./test/runtime.js",
   "./test/tests.es5.js",
-  "./test/async.es5.js"
+  "./test/tests-node4.es5.js",
+  "./test/non-native.es5.js",
+  "./test/async.es5.js",
+  "./test/regression.es5.js",
+  "./test/tests.transform.js"
 ]);
+
+// Run command-line tool with available options to make sure it works.
+
+enqueue("./bin/regenerator", [
+  "./test/async.es5.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--include-runtime",
+  "./test/async.es5.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--disable-async",
+  "./test/async.es5.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--include-runtime",
+  "--disable-async",
+  "./test/async.es5.js"
+], true);
+
+// Make sure we run the command-line tool on a file that does not need any
+// transformation, too.
+
+enqueue("./bin/regenerator", [
+  "./test/nothing-to-transform.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--include-runtime",
+  "./test/nothing-to-transform.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--disable-async",
+  "./test/nothing-to-transform.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--include-runtime",
+  "--disable-async",
+  "./test/nothing-to-transform.js"
+], true);
+
+// Make sure we run the command-line tool on a file that would trigger this error:
+//
+//     You passed `path.replaceWith()` a falsy node, use `path.remove()` instead
+
+enqueue("./bin/regenerator", [
+  "./test/replaceWith-falsy.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--include-runtime",
+  "./test/replaceWith-falsy.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--disable-async",
+  "./test/replaceWith-falsy.js"
+], true);
+
+enqueue("./bin/regenerator", [
+  "--include-runtime",
+  "--disable-async",
+  "./test/replaceWith-falsy.js"
+], true);
 
 flush();

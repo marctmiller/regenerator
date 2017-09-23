@@ -8,12 +8,9 @@
  * the same directory.
  */
 
-var assert = require("assert");
-var types = require("recast").types;
-var n = types.namedTypes;
-var b = types.builders;
-var inherits = require("util").inherits;
-var hasOwn = Object.prototype.hasOwnProperty;
+import assert from "assert";
+import * as t from "babel-types";
+import { inherits } from "util";
 
 function Entry() {
   assert.ok(this instanceof Entry);
@@ -21,12 +18,8 @@ function Entry() {
 
 function FunctionEntry(returnLoc) {
   Entry.call(this);
-
-  n.Literal.assert(returnLoc);
-
-  Object.defineProperties(this, {
-    returnLoc: { value: returnLoc }
-  });
+  t.assertLiteral(returnLoc);
+  this.returnLoc = returnLoc;
 }
 
 inherits(FunctionEntry, Entry);
@@ -35,20 +28,18 @@ exports.FunctionEntry = FunctionEntry;
 function LoopEntry(breakLoc, continueLoc, label) {
   Entry.call(this);
 
-  n.Literal.assert(breakLoc);
-  n.Literal.assert(continueLoc);
+  t.assertLiteral(breakLoc);
+  t.assertLiteral(continueLoc);
 
   if (label) {
-    n.Identifier.assert(label);
+    t.assertIdentifier(label);
   } else {
     label = null;
   }
 
-  Object.defineProperties(this, {
-    breakLoc: { value: breakLoc },
-    continueLoc: { value: continueLoc },
-    label: { value: label }
-  });
+  this.breakLoc = breakLoc;
+  this.continueLoc = continueLoc;
+  this.label = label;
 }
 
 inherits(LoopEntry, Entry);
@@ -56,12 +47,8 @@ exports.LoopEntry = LoopEntry;
 
 function SwitchEntry(breakLoc) {
   Entry.call(this);
-
-  n.Literal.assert(breakLoc);
-
-  Object.defineProperties(this, {
-    breakLoc: { value: breakLoc }
-  });
+  t.assertLiteral(breakLoc);
+  this.breakLoc = breakLoc;
 }
 
 inherits(SwitchEntry, Entry);
@@ -70,7 +57,7 @@ exports.SwitchEntry = SwitchEntry;
 function TryEntry(firstLoc, catchEntry, finallyEntry) {
   Entry.call(this);
 
-  n.Literal.assert(firstLoc);
+  t.assertLiteral(firstLoc);
 
   if (catchEntry) {
     assert.ok(catchEntry instanceof CatchEntry);
@@ -87,11 +74,9 @@ function TryEntry(firstLoc, catchEntry, finallyEntry) {
   // Have to have one or the other (or both).
   assert.ok(catchEntry || finallyEntry);
 
-  Object.defineProperties(this, {
-    firstLoc: { value: firstLoc },
-    catchEntry: { value: catchEntry },
-    finallyEntry: { value: finallyEntry }
-  });
+  this.firstLoc = firstLoc;
+  this.catchEntry = catchEntry;
+  this.finallyEntry = finallyEntry;
 }
 
 inherits(TryEntry, Entry);
@@ -100,46 +85,51 @@ exports.TryEntry = TryEntry;
 function CatchEntry(firstLoc, paramId) {
   Entry.call(this);
 
-  n.Literal.assert(firstLoc);
-  n.Identifier.assert(paramId);
+  t.assertLiteral(firstLoc);
+  t.assertIdentifier(paramId);
 
-  Object.defineProperties(this, {
-    firstLoc: { value: firstLoc },
-    paramId: { value: paramId }
-  });
+  this.firstLoc = firstLoc;
+  this.paramId = paramId;
 }
 
 inherits(CatchEntry, Entry);
 exports.CatchEntry = CatchEntry;
 
-function FinallyEntry(firstLoc) {
+function FinallyEntry(firstLoc, afterLoc) {
   Entry.call(this);
-
-  n.Literal.assert(firstLoc);
-
-  Object.defineProperties(this, {
-    firstLoc: { value: firstLoc }
-  });
+  t.assertLiteral(firstLoc);
+  t.assertLiteral(afterLoc);
+  this.firstLoc = firstLoc;
+  this.afterLoc = afterLoc;
 }
 
 inherits(FinallyEntry, Entry);
 exports.FinallyEntry = FinallyEntry;
 
+function LabeledEntry(breakLoc, label) {
+  Entry.call(this);
+
+  t.assertLiteral(breakLoc);
+  t.assertIdentifier(label);
+
+  this.breakLoc = breakLoc;
+  this.label = label;
+}
+
+inherits(LabeledEntry, Entry);
+exports.LabeledEntry = LabeledEntry;
+
 function LeapManager(emitter) {
   assert.ok(this instanceof LeapManager);
 
-  var Emitter = require("./emit").Emitter;
+  let Emitter = require("./emit").Emitter;
   assert.ok(emitter instanceof Emitter);
 
-  Object.defineProperties(this, {
-    emitter: { value: emitter },
-    entryStack: {
-      value: [new FunctionEntry(emitter.finalLoc)]
-    }
-  });
+  this.emitter = emitter;
+  this.entryStack = [new FunctionEntry(emitter.finalLoc)];
 }
 
-var LMp = LeapManager.prototype;
+let LMp = LeapManager.prototype;
 exports.LeapManager = LeapManager;
 
 LMp.withEntry = function(entry, callback) {
@@ -148,21 +138,24 @@ LMp.withEntry = function(entry, callback) {
   try {
     callback.call(this.emitter);
   } finally {
-    var popped = this.entryStack.pop();
+    let popped = this.entryStack.pop();
     assert.strictEqual(popped, entry);
   }
 };
 
 LMp._findLeapLocation = function(property, label) {
-  for (var i = this.entryStack.length - 1; i >= 0; --i) {
-    var entry = this.entryStack[i];
-    var loc = entry[property];
+  for (let i = this.entryStack.length - 1; i >= 0; --i) {
+    let entry = this.entryStack[i];
+    let loc = entry[property];
     if (loc) {
       if (label) {
         if (entry.label &&
             entry.label.name === label.name) {
           return loc;
         }
+      } else if (entry instanceof LabeledEntry) {
+        // Ignore LabeledEntry entries unless we are actually breaking to
+        // a label.
       } else {
         return loc;
       }
